@@ -19,6 +19,9 @@ if __name__ == "__main__":
     parser.add_argument('--max-tokens-per-node', type=int, default=20000,
                       help='Maximum number of tokens per node (PDF only)')
 
+    parser.add_argument('--concurrency-limit', type=int, default=10,
+                      help='Max concurrent API calls (default: 10)')
+
     parser.add_argument('--if-add-node-id', type=str, default='yes',
                       help='Whether to add node id to the node')
     parser.add_argument('--if-add-node-summary', type=str, default='yes',
@@ -57,6 +60,7 @@ if __name__ == "__main__":
             toc_check_page_num=args.toc_check_pages,
             max_page_num_each_node=args.max_pages_per_node,
             max_token_num_each_node=args.max_tokens_per_node,
+            concurrency_limit=args.concurrency_limit,
             if_add_node_id=args.if_add_node_id,
             if_add_node_summary=args.if_add_node_summary,
             if_add_doc_description=args.if_add_doc_description,

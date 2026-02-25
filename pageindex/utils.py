@@ -113,9 +113,26 @@ async def ChatGPT_API_async(model, prompt, api_key=CHATGPT_API_KEY):
                 await asyncio.sleep(wait)
             else:
                 logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"  
-            
-            
+                return "Error"
+
+
+_CONCURRENCY_LIMIT = 10  # default; override via set_concurrency_limit()
+
+def set_concurrency_limit(limit):
+    global _CONCURRENCY_LIMIT
+    _CONCURRENCY_LIMIT = limit
+
+async def gather_with_limit(tasks, limit=None):
+    """Run async tasks with a concurrency cap to avoid API rate limits."""
+    if limit is None:
+        limit = _CONCURRENCY_LIMIT
+    semaphore = asyncio.Semaphore(limit)
+    async def limited(task):
+        async with semaphore:
+            return await task
+    return await asyncio.gather(*[limited(t) for t in tasks], return_exceptions=True)
+
+
 def get_json_content(response):
     start_idx = response.find("```json")
     if start_idx != -1:
@@ -629,8 +646,8 @@ async def generate_node_summary(node, model=None):
 async def generate_summaries_for_structure(structure, model=None):
     nodes = structure_to_list(structure)
     tasks = [generate_node_summary(node, model=model) for node in nodes]
-    summaries = await asyncio.gather(*tasks)
-    
+    summaries = await gather_with_limit(tasks)
+
     for node, summary in zip(nodes, summaries):
         node['summary'] = summary
     return structure
