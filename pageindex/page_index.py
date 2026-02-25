@@ -118,7 +118,9 @@ def toc_detector_single_page(content, model=None):
 
     response = ChatGPT_API(model=model, prompt=prompt)
     # print('response', response)
-    json_content = extract_json(response)    
+    json_content = extract_json(response)
+    if not json_content or 'toc_detected' not in json_content:
+        return "no"
     return json_content['toc_detected']
 
 
@@ -137,6 +139,8 @@ def check_if_toc_extraction_is_complete(content, toc, model=None):
     prompt = prompt + '\n Document:\n' + content + '\n Table of contents:\n' + toc
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
+    if not json_content or 'completed' not in json_content:
+        return "no"
     return json_content['completed']
 
 
@@ -155,6 +159,8 @@ def check_if_toc_transformation_is_complete(content, toc, model=None):
     prompt = prompt + '\n Raw Table of contents:\n' + content + '\n Cleaned Table of contents:\n' + toc
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
+    if not json_content or 'completed' not in json_content:
+        return "no"
     return json_content['completed']
 
 def extract_toc_content(content, model=None):
@@ -214,6 +220,8 @@ def detect_page_index(toc_content, model=None):
 
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
+    if not json_content or 'page_index_given_in_toc' not in json_content:
+        return "no"
     return json_content['page_index_given_in_toc']
 
 def toc_extractor(page_list, toc_page_list, model):
@@ -524,11 +532,18 @@ def generate_toc_continue(toc_content, part, model="gpt-4o-2024-11-20"):
     Directly return the additional part of the final JSON structure. Do not output anything else."""
 
     prompt = prompt + '\nGiven text\n:' + part + '\nPrevious tree structure\n:' + json.dumps(toc_content, indent=2)
-    response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
-    if finish_reason == 'finished':
-        return extract_json(response)
-    else:
-        raise Exception(f'finish reason: {finish_reason}')
+    for attempt in range(3):
+        response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
+        if finish_reason == 'finished':
+            result = extract_json(response)
+            if result:
+                return result
+        if attempt < 2:
+            import time
+            print(f'generate_toc_continue: retrying (attempt {attempt+2}/3, finish_reason={finish_reason})')
+            time.sleep(5)
+    print(f'Warning: generate_toc_continue failed after 3 attempts, returning empty list')
+    return []
     
 ### add verify completeness
 def generate_toc_init(part, model=None):
@@ -558,12 +573,19 @@ def generate_toc_init(part, model=None):
     Directly return the final JSON structure. Do not output anything else."""
 
     prompt = prompt + '\nGiven text\n:' + part
-    response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
-
-    if finish_reason == 'finished':
-         return extract_json(response)
-    else:
-        raise Exception(f'finish reason: {finish_reason}')
+    for attempt in range(3):
+        response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
+        if finish_reason == 'finished':
+            result = extract_json(response)
+            if result:
+                return result
+        if attempt < 2:
+            import time
+            print(f'generate_toc_init: retrying (attempt {attempt+2}/3, finish_reason={finish_reason})')
+            time.sleep(5)
+    # Return empty list as fallback instead of crashing
+    print(f'Warning: generate_toc_init failed after 3 attempts, returning empty list')
+    return []
 
 def process_no_toc(page_list, start_index=1, model=None, logger=None):
     page_contents=[]
@@ -744,7 +766,9 @@ def single_toc_item_index_fixer(section_title, content, model="gpt-4o-2024-11-20
 
     prompt = tob_extractor_prompt + '\nSection Title:\n' + str(section_title) + '\nDocument pages:\n' + content
     response = ChatGPT_API(model=model, prompt=prompt)
-    json_content = extract_json(response)    
+    json_content = extract_json(response)
+    if not json_content or 'physical_index' not in json_content:
+        return None
     return convert_physical_index_to_int(json_content['physical_index'])
 
 
@@ -986,7 +1010,11 @@ async def meta_processor(page_list, mode=None, toc_content=None, toc_page_list=N
         elif mode == 'process_toc_no_page_numbers':
             return await meta_processor(page_list, mode='process_no_toc', start_index=start_index, opt=opt, logger=logger)
         else:
-            raise Exception('Processing failed')
+            # Last fallback: accept low-accuracy results and attempt fixes
+            print(f'Warning: low accuracy ({accuracy*100:.2f}%) in process_no_toc mode, attempting to fix and continue')
+            if len(incorrect_results) > 0:
+                toc_with_page_number, incorrect_results = await fix_incorrect_toc_with_retries(toc_with_page_number, page_list, incorrect_results, start_index=start_index, max_attempts=3, model=opt.model, logger=logger)
+            return toc_with_page_number
         
  
 async def process_large_node_recursively(node, page_list, opt=None, logger=None):

@@ -2,6 +2,7 @@ import tiktoken
 import openai
 import logging
 import os
+import re
 from datetime import datetime
 import time
 import json
@@ -18,17 +19,21 @@ from pathlib import Path
 from types import SimpleNamespace as config
 
 CHATGPT_API_KEY = os.getenv("CHATGPT_API_KEY")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")  # set to http://localhost:11434/v1 for Ollama
 
 def count_tokens(text, model=None):
     if not text:
         return 0
-    enc = tiktoken.encoding_for_model(model)
+    try:
+        enc = tiktoken.encoding_for_model(model)
+    except KeyError:
+        enc = tiktoken.get_encoding("cl100k_base")
     tokens = enc.encode(text)
     return len(tokens)
 
 def ChatGPT_API_with_finish_reason(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
-    max_retries = 10
-    client = openai.OpenAI(api_key=api_key)
+    max_retries = 20
+    client = openai.OpenAI(api_key=api_key, base_url=OPENAI_BASE_URL, timeout=600.0)
     for i in range(max_retries):
         try:
             if chat_history:
@@ -36,7 +41,7 @@ def ChatGPT_API_with_finish_reason(model, prompt, api_key=CHATGPT_API_KEY, chat_
                 messages.append({"role": "user", "content": prompt})
             else:
                 messages = [{"role": "user", "content": prompt}]
-            
+
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -51,16 +56,17 @@ def ChatGPT_API_with_finish_reason(model, prompt, api_key=CHATGPT_API_KEY, chat_
             print('************* Retrying *************')
             logging.error(f"Error: {e}")
             if i < max_retries - 1:
-                time.sleep(1)  # Wait for 1秒 before retrying
+                wait = min(2 ** i, 30)
+                time.sleep(wait)
             else:
                 logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"
+                return "Error", "error"
 
 
 
 def ChatGPT_API(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
-    max_retries = 10
-    client = openai.OpenAI(api_key=api_key)
+    max_retries = 20
+    client = openai.OpenAI(api_key=api_key, base_url=OPENAI_BASE_URL, timeout=600.0)
     for i in range(max_retries):
         try:
             if chat_history:
@@ -68,30 +74,31 @@ def ChatGPT_API(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
                 messages.append({"role": "user", "content": prompt})
             else:
                 messages = [{"role": "user", "content": prompt}]
-            
+
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=0,
             )
-   
+
             return response.choices[0].message.content
         except Exception as e:
             print('************* Retrying *************')
             logging.error(f"Error: {e}")
             if i < max_retries - 1:
-                time.sleep(1)  # Wait for 1秒 before retrying
+                wait = min(2 ** i, 30)
+                time.sleep(wait)
             else:
                 logging.error('Max retries reached for prompt: ' + prompt)
                 return "Error"
             
 
 async def ChatGPT_API_async(model, prompt, api_key=CHATGPT_API_KEY):
-    max_retries = 10
+    max_retries = 20
     messages = [{"role": "user", "content": prompt}]
     for i in range(max_retries):
         try:
-            async with openai.AsyncOpenAI(api_key=api_key) as client:
+            async with openai.AsyncOpenAI(api_key=api_key, base_url=OPENAI_BASE_URL, timeout=600.0) as client:
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
@@ -102,7 +109,8 @@ async def ChatGPT_API_async(model, prompt, api_key=CHATGPT_API_KEY):
             print('************* Retrying *************')
             logging.error(f"Error: {e}")
             if i < max_retries - 1:
-                await asyncio.sleep(1)  # Wait for 1s before retrying
+                wait = min(2 ** i, 30)
+                await asyncio.sleep(wait)
             else:
                 logging.error('Max retries reached for prompt: ' + prompt)
                 return "Error"  
@@ -123,6 +131,8 @@ def get_json_content(response):
          
 
 def extract_json(content):
+    # Strip DeepSeek-R1 chain-of-thought blocks before parsing
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
     try:
         # First, try to extract JSON enclosed within ```json and ```
         start_idx = content.find("```json")
@@ -411,7 +421,10 @@ def add_preface_if_needed(data):
 
 
 def get_page_tokens(pdf_path, model="gpt-4o-2024-11-20", pdf_parser="PyPDF2"):
-    enc = tiktoken.encoding_for_model(model)
+    try:
+        enc = tiktoken.encoding_for_model(model)
+    except KeyError:
+        enc = tiktoken.get_encoding("cl100k_base")
     if pdf_parser == "PyPDF2":
         pdf_reader = PyPDF2.PdfReader(pdf_path)
         page_list = []
